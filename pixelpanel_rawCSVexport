@@ -1,0 +1,162 @@
+/**** Start of imports. If edited, may not auto-convert in the playground. ****/
+var cdlAll = ee.ImageCollection("USDA/NASS/CDL"),
+    usStates = ee.FeatureCollection("TIGER/2016/States"),
+    usCounties = ee.FeatureCollection("TIGER/2016/Counties"),
+    stateCentroids = ee.FeatureCollection("users/akashmit/usstatecentroids"),
+    countyCentroids = ee.FeatureCollection("users/akashmit/uscountycentroids");
+/***** End of imports. If edited, may not auto-convert in the playground. *****/
+///////////////////// !!!!! READ ME !!!!! ////////////////////////////////////////////////////////
+// Last reviewed: March 07, 2023
+
+// This code creates tasks that export county-year pixel-level CSV files. 
+
+// The CSV files contain the following variables:
+    // cropland: Main crop-specific land cover classification. 
+    // confidence: Per-pixel predicted confidence of the given classification, with 0 being the least confident and 100 the most confident. Available from 2008 to 2017 (Note: Confidence for Florida and Washington D.C. is unavailable for 2010).
+    // cultivated: Classification layer for identifying cultivated and non-cultivated land cover. Available from 2013 to 2017.
+
+    // countyFP: County FIPs ID
+    // stateFP: State FIPs ID
+    
+    // latitude: Latitude of center of pixel
+    // longitude: Longitude of center of pixel
+    // .geo: Geometry variable
+
+// In order to export the CSV files (which will be saved to the user's Google Drive), the user must:
+    // A - Pick which range of counties to export by changing the "countyStart" and "countyEnd" variables 
+      // Here are the start and end county numbers for select states without "too-large-to-export" counties:
+          // CT [308, 315]
+          // DE [316, 318]
+          // GA [387, 545]
+          // IN [697, 788]
+          // NJ [1774, 1794]
+          // RI [2311, 2315]
+      // I found that setting too wide of a range of counties can lead Google Earth Engine to crash.
+        // I recommend keeping the number of counties under 200.
+      
+    // B - Pick the year, by changing it in the "countyLoopFunc" function (near the end of the script)
+      // The first available data year is 2008.
+      
+    // C - Press the grey "Run" button above the script editor. 
+      // This will create "cdl_YYYY_c###" tasks in the right-hand panel under the Tasks tab.
+      // Each of these "cdl_YYYY_c###" tasks have their own blue "RUN" buttons which need to be pressed.
+      // There are a lot of buttons to press, but there is a work-around.  
+        // See https://benny.istan.to/blog/20220319-batch-task-execution-in-google-earth-engine-code-editor
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+//    //    //    //    //    //    //    //    //    //    //    //    //
+  //    //    //    //    //    //    //    //    //    //    //    //    //
+//    //    //    //    //    //    //    //    //    //    //    //    //
+
+// IMPORTS CODE (just so we have it)
+  //  var cdlAll = ee.ImageCollection("USDA/NASS/CDL"),
+  //      usStates = ee.FeatureCollection("TIGER/2016/States"),
+  //      usCounties = ee.FeatureCollection("TIGER/2016/Counties"),
+  //      stateCentroids = ee.FeatureCollection("users/akashmit/usstatecentroids"),
+  //      countyCentroids = ee.FeatureCollection("users/akashmit/uscountycentroids");
+
+//    //    //    //    //    //    //    //    //    //    //    //    //
+  //    //    //    //    //    //    //    //    //    //    //    //    //
+//    //    //    //    //    //    //    //    //    //    //    //    //
+
+// LOADING OUR COUNTY & STATE CENTROID DATA ////////////////////////////////////////////////////////
+  var countycenters = ee.FeatureCollection(countyCentroids);
+  var statecenters = ee.FeatureCollection(stateCentroids);
+
+// Creating list of counties ----------------------------------------------
+  var countypointlist = countycenters.geometry().coordinates();
+    print(countypointlist);
+  
+// Creating list of states ----------------------------------------------
+  var statepointlist = statecenters.geometry().coordinates();
+    print(statepointlist);
+
+// Identifying number of total counties ----------------------------------------------
+  var countyTotObj = ee.Number(countypointlist.size());
+  var countyTot = countyTotObj.getInfo();
+  var countyTot = countyTot - 1;
+  print("County Feature ID Range: [0, " + countyTot + "]");
+
+//    //    //    //    //    //    //    //    //    //    //    //    //
+  //    //    //    //    //    //    //    //    //    //    //    //    //
+//    //    //    //    //    //    //    //    //    //    //    //    //
+
+// DEFINING FUNCTIONS BEFORE MAIN LOOP FUNCTION ////////////////////////////////////////////////////////
+// Defining function to keep only 1 county ----------------------------------------------
+  var getCounty = function(i) {
+    return ee.Geometry.Point(countypointlist.get(i));
+  }
+// Getting lat longs county ----------------------------------------------
+  var getLatLong = (function(img) {
+    var proj = img.select([0]).projection();
+    var latlon = ee.Image.pixelLonLat();   // get coordinates image
+    var img1 = img.addBands(latlon.select('longitude','latitude'));
+    return img1;
+  });
+
+//    //    //    //    //    //    //    //    //    //    //    //    //
+  //    //    //    //    //    //    //    //    //    //    //    //    //
+//    //    //    //    //    //    //    //    //    //    //    //    //
+
+// DEFINING COUNTY-YEAR LOOP FUNCTION  ////////////////////////////////////////////////////////
+var countyLoopFunc = function(YR, CNTY) {
+  var CID = CNTY;
+  var csvFilename = 'cdl_' + YR + "_c" + CID;
+  
+  var countyPoint = getCounty(CNTY);
+  var countyPoly = ee.FeatureCollection(usCounties).filterBounds(countyPoint);
+  var statePoly = ee.FeatureCollection(usStates).filterBounds(countyPoint);
+  
+  var countyFeat = countyPoly.first();
+  var countyFPnum = ee.Number.parse(countyFeat.get('COUNTYFP'));
+  var stateFPnum = ee.Number.parse(countyFeat.get('STATEFP'));
+  var countyFPstr = countyFPnum.format();
+  var stateFPstr = stateFPnum.format();
+  
+  var year = YR;  
+  var startdate = ee.String(year).cat('-01-01');
+  var enddate = ee.String(year).cat('-12-31')  ;
+
+  var fipscdl = ee.Image.constant([stateFPnum,countyFPnum])
+                        .select(['constant_0', 'constant_1'])
+                        .rename(['stateFP', 'countyFP']);
+                        
+  var cdl_og = ee.ImageCollection(cdlAll)
+                .filterDate(startdate, enddate);
+  var cdl = cdl_og.first();
+  
+  var countyCDLtemp = cdl.clip(countyPoly);
+  var countyCDL_temp = getLatLong(countyCDLtemp)
+  var countyCDL = countyCDL_temp.addBands(fipscdl.select('stateFP','countyFP'))
+  var countyCDL_pix = countyCDL.sample({
+    region: countyPoly,
+    geometries: true,
+  });
+  
+  Export.table.toDrive({
+    collection: countyCDL_pix,
+    description: csvFilename,
+    fileFormat: 'CSV'
+  });
+
+  print('Ready for export: ' + csvFilename);
+};
+
+//    //    //    //    //    //    //    //    //    //    //    //    //
+  //    //    //    //    //    //    //    //    //    //    //    //    //
+//    //    //    //    //    //    //    //    //    //    //    //    //
+
+// RUNNING THE LOOP BIT BY BIT ////////////////////////////////////////////////////////
+
+// Creating list of counties to loop through  ----------------------------------------------
+  var countyStart = 308
+  var countyEnd = 315
+
+// Running the loop ----------------------------------------------
+  for (var i = countyStart; i <= countyEnd; i++) {
+    var cntyData = countyLoopFunc("2008", i)
+  }
+  
+//    //    //    //    //    //    //    //    //    //    //    //    //
+  //    //    //    //    //    //    //    //    //    //    //    //    //
+//    //    //    //    //    //    //    //    //    //    //    //    //

@@ -1,0 +1,318 @@
+/**** Start of imports. If edited, may not auto-convert in the playground. ****/
+var cdlAll = ee.ImageCollection("USDA/NASS/CDL"),
+    usStates = ee.FeatureCollection("TIGER/2016/States"),
+    usCounties = ee.FeatureCollection("TIGER/2016/Counties"),
+    stateCentroids = ee.FeatureCollection("users/akashmit/usstatecentroids"),
+    countyCentroids = ee.FeatureCollection("users/akashmit/uscountycentroids"),
+    geometry = 
+    /* color: #d63000 */
+    /* displayProperties: [
+      {
+        "type": "rectangle"
+      }
+    ] */
+    ee.Geometry.Polygon(
+        [[[-86.96014281675582, 40.381618655384784],
+          [-86.96014281675582, 40.36173983846835],
+          [-86.93044539854291, 40.36173983846835],
+          [-86.93044539854291, 40.381618655384784]]], null, false);
+/***** End of imports. If edited, may not auto-convert in the playground. *****/
+///////////////////// !!!!! READ ME !!!!! ////////////////////////////////////////////////////////
+// Last reviewed: March 07, 2023
+
+// This code creates a task that exports a state-year map of specified crops.
+    // NOTE, several manual edits are needed for each state-year map.
+
+// In order to export the map (which will be saved to the user's Google Drive), the user must:
+    // A - Pick the state by defining the following variable: "var STATE = " (around line 115ish)
+      // CT 6
+      // DE 7
+      // DC 8
+      // GA 10
+      // IN 14
+      // NJ 30
+      // RI 39
+      
+    // B - Pick the data-year and manually adjust the relevant variables. THIS REQUIRES CAREFUL ATTENTION.
+      // This is done in "GETTING CDL DATA" section (around line 200ish)
+      // I wasn't able to create a variable that was named based on the value of another variable.
+      // Because of this, I created "year"-specific variables. The variables need to be renamed for each year.
+      // The following variable is where the year is selected:
+          // var cdl"YYYY" = getStateCDL("YYYY").cast(cdldict);
+        // Subsequent variables are based on this year and need to be manually adjusted.
+      
+    // C - Map the desired crops. Currently we are visualizing crop codes: 1, 5, and 241.
+      // This can be changed in the "GETTING CDL DATA" section.
+      // Similar to above, this is year specific and requires manual editing by the user.
+      
+    // D - Adjust the variable names and visual parameters in the "FINAL DATA LAYER" section (around line 230ish).
+    
+    // E - Adjust the variable names in the "MAPPING & EXPORTING CDL DATA" section (around line 280ish)
+      
+    // F - Press the grey "Run" button above the code editor. 
+      // This will create a task in the Task panel on the right-hand side. 
+      // Press the blue "RUN" button to export the map to Google Drive.
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+//    //    //    //    //    //    //    //    //    //    //    //    //
+  //    //    //    //    //    //    //    //    //    //    //    //    //
+//    //    //    //    //    //    //    //    //    //    //    //    //
+
+
+// IMPORTS CODE (just so we have it)
+  //  var cdlAll = ee.ImageCollection("USDA/NASS/CDL"),
+  //      usStates = ee.FeatureCollection("TIGER/2016/States"),
+  //      usCounties = ee.FeatureCollection("TIGER/2016/Counties"),
+  //      stateCentroids = ee.FeatureCollection("users/akashmit/usstatecentroids"),
+  //      countyCentroids = ee.FeatureCollection("users/akashmit/uscountycentroids"),
+  //      geometry = 
+  //      /* color: #d63000 */
+  //      /* displayProperties: [
+  //        {
+  //          "type": "rectangle"
+  //        }
+  //      ] */
+  //      ee.Geometry.Polygon(
+  //          [[[-86.96014281675582, 40.381618655384784],
+  //            [-86.96014281675582, 40.36173983846835],
+  //            [-86.93044539854291, 40.36173983846835],
+  //            [-86.93044539854291, 40.381618655384784]]], null, false);
+
+//    //    //    //    //    //    //    //    //    //    //    //    //
+  //    //    //    //    //    //    //    //    //    //    //    //    //
+//    //    //    //    //    //    //    //    //    //    //    //    //
+
+
+// LOADING OUR COUNTY & STATE CENTROID DATA ////////////////////////////////////////////////////////
+  var countycenters = ee.FeatureCollection(countyCentroids);
+  var statecenters = ee.FeatureCollection(stateCentroids);
+
+////// Creating list of counties ----------------------------------------------
+  var countypointlist = countycenters.geometry().coordinates();
+    //print(countypointlist);
+  
+////// Creating list of states ----------------------------------------------
+  var statepointlist = statecenters.geometry().coordinates();
+    //print(statepointlist);
+
+
+//    //    //    //    //    //    //    //    //    //    //    //    //
+  //    //    //    //    //    //    //    //    //    //    //    //    //
+//    //    //    //    //    //    //    //    //    //    //    //    //
+
+
+// DEFINING FUNCTIONS BEFORE MAIN LOOP FUNCTION ////////////////////////////////////////////////////////
+
+////// getting state center ----------------------------------------------
+  var getStateCenter = function(i) {
+    var statePoint = ee.Geometry.Point(statepointlist.get(i));
+    return(statePoint);
+  };
+  
+////// getting state polygon ----------------------------------------------
+  var getStatePoly = function(i) {
+    var statePoint = ee.Geometry.Point(statepointlist.get(i));
+    var statePoly = ee.FeatureCollection(usStates).filterBounds(statePoint);
+    return(statePoly);
+  };
+  
+////// getting lat longs ----------------------------------------------
+  var getLatLong = (function(img) {
+    var proj = img.select([0]).projection();
+    var latlon = ee.Image.pixelLonLat();   // get coordinates image
+    var img1 = img.addBands(latlon.select('longitude','latitude'));
+    return img1;
+  });
+
+
+//    //    //    //    //    //    //    //    //    //    //    //    //
+  //    //    //    //    //    //    //    //    //    //    //    //    //
+//    //    //    //    //    //    //    //    //    //    //    //    //
+
+
+// DEFINING OUR STATE ////////////////////////////////////////////////////////
+  var STATE = 14
+  var stateCenter = getStateCenter(STATE);
+  var statePoly = getStatePoly(STATE);
+  //print("statePoly", statePoly);
+
+////// creating image of state polygon ----------------------------------------------
+  var stateImgTemp = statePoly
+    .reduceToImage(
+      {
+        properties: ['title'],
+        reducer: ee.Reducer.first()
+      }
+    ).paint(
+        statePoly, 0 , null
+      ).rename('cropland')
+      .add(255)
+      .uint16();
+
+  var stateImg = getLatLong(stateImgTemp);
+  print("stateImg:", stateImg)
+
+
+////// getting whitebox ----------------------------------------------
+  var getStateBox = function(FC) {
+    var box = FC.geometry()
+                  .bounds();
+    var perim = box.perimeter({'maxError': 10});
+    var lenbuff = perim.divide(40)
+    var buffer = box.buffer(lenbuff).bounds();
+    return buffer;
+  }
+
+  var boxPoly = getStateBox(statePoly);
+    //print("boxPoly", boxPoly);
+    
+  var boxFC = ee.FeatureCollection(boxPoly).set('title', 'blackbox');
+  //print(boxFC);
+  
+var boxImgTemp = boxFC
+    .reduceToImage(
+      {
+        properties: ['title'],
+        reducer: ee.Reducer.first()
+      }
+    ).paint(
+        boxFC, 0 , null
+      ).rename('cropland')
+      .add(256)
+      .uint16();
+  var boxImg = getLatLong(boxImgTemp);
+  print("boxImg:", boxImg)
+
+
+//    //    //    //    //    //    //    //    //    //    //    //    //
+  //    //    //    //    //    //    //    //    //    //    //    //    //
+//    //    //    //    //    //    //    //    //    //    //    //    //
+
+
+// DEFINING STATE CDL FUNCTION  ////////////////////////////////////////////////////////
+var getStateCDL = function(YR) {
+  var year = YR;  
+  var startdate = ee.String(year).cat('-01-01');
+  var enddate = ee.String(year).cat('-12-31')  ;
+
+  var cdl_og = ee.ImageCollection(cdlAll)
+                .filterDate(startdate, enddate);
+
+  var cdl = cdl_og.first();
+  
+  var stateCDLtemp = cdl.clip(statePoly);
+  var stateCDL = getLatLong(stateCDLtemp);
+  
+  return(stateCDL);
+};
+
+
+//    //    //    //    //    //    //    //    //    //    //    //    //
+  //    //    //    //    //    //    //    //    //    //    //    //    //
+//    //    //    //    //    //    //    //    //    //    //    //    //
+
+
+// GETTING CDL DATA  ////////////////////////////////////////////////////////
+
+////// getting cdl data for year "YYYY" ----------------------------------------------
+  var cdldict = {
+      'cropland': 'uint16', 
+      'cultivated': 'uint8', 
+      'confidence': 'uint8', 
+      'longitude': 'double', 
+      'latitude': 'double'
+  }
+  
+  var cdl2020 = getStateCDL("2020").cast(cdldict);
+  //print(cdl2020);
+  
+
+////// only keeping crop data for specified crops ----------------------------------------------
+  var cdl20_c1n5n241 = cdl2020.updateMask(
+    cdl2020.eq(1)
+      .or(cdl2020.eq(5))
+      .or(cdl2020.eq(241))
+  )
+  .select(['cropland', 'longitude', 'latitude']);  
+
+  
+//    //    //    //    //    //    //    //    //    //    //    //    //
+  //    //    //    //    //    //    //    //    //    //    //    //    //
+//    //    //    //    //    //    //    //    //    //    //    //    //
+
+
+// FINAL DATA LAYER  ////////////////////////////////////////////////////////
+
+////// combining stateImg and cdlCropSpec into 1 img ----------------------------------------------
+  var stateImgCDL = ee.ImageCollection([cdl20_c1n5n241, stateImg]).min();
+  var boxstateImgCDL = ee.ImageCollection([cdl20_c1n5n241, stateImg, boxImg]).min();
+  print(stateImgCDL)
+  print(boxstateImgCDL)
+  
+
+////// defining visual parameters ----------------------------------------------
+  var croplandPalette2020 = cdl2020.get('cropland_class_palette');
+  var origPaletteCDL = croplandPalette2020.getInfo();
+
+  var paletteCDL = croplandPalette2020.getInfo();
+  paletteCDL[0] = 'ffffff';
+  var stateI = paletteCDL.length
+  var boxI = stateI + 1
+  paletteCDL[stateI]='ffffff'
+  paletteCDL[boxI]='000000'
+  print("palette CDL", paletteCDL)
+  
+  var lim = origPaletteCDL.length
+  
+  var manualColors = ["000000"]
+  print(manualColors)
+  
+  
+  for (var i=1; i<=256 ; i++) {
+    manualColors[i] = "000000"
+  }
+  manualColors[1] = "fff200"
+  manualColors[5] = "267000"
+  manualColors[241] = "ffa960"
+  manualColors[255] = "ffe2c4"
+  manualColors[256] = "FFFFFF"
+  
+  print(manualColors)
+  
+  var vpMax = parseInt(manualColors.length-1)
+
+  var visParams = {
+                bands: ['cropland'], 
+                min: 0,
+                max: 256 ,
+                palette: manualColors
+  };
+  print(visParams);
+  
+  
+//    //    //    //    //    //    //    //    //    //    //    //    //
+  //    //    //    //    //    //    //    //    //    //    //    //    //
+//    //    //    //    //    //    //    //    //    //    //    //    //
+
+
+// MAPPING & EXPORTING CDL DATA  ////////////////////////////////////////////////////////
+  Map.centerObject(stateCenter, 7);
+  //Map.addLayer(boxPoly, {color: 'FFFFFF'}, "White Box box", true, 1)
+  //Map.addLayer(statePoly, {color: 'ffe2c4'}, "Indiana", true, 1)
+  Map.addLayer(boxstateImgCDL, visParams, "Final Map", true, 1)
+  print(boxstateImgCDL);
+  
+// Exporting RBG
+  var imageRGB = boxstateImgCDL.visualize(visParams);
+  print(imageRGB);
+  
+  Export.image.toDrive({
+    image: imageRGB,
+    description: 'CDL20_c1n5n241',
+    folder: 'images',
+    scale: 120,
+    maxPixels: 803042900,
+    region: boxPoly
+  });
+  
